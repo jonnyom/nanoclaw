@@ -1,3 +1,4 @@
+import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -8,6 +9,7 @@ import {
   POLL_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
+  TELEGRAM_BOT_POOL,
 } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
@@ -15,6 +17,7 @@ import {
   getChannelFactory,
   getRegisteredChannelNames,
 } from './channels/registry.js';
+import { initBotPool } from './channels/telegram.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -540,6 +543,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Initialize Telegram bot pool for agent teams (send-only pool bots)
+  if (TELEGRAM_BOT_POOL.length > 0) {
+    await initBotPool(TELEGRAM_BOT_POOL);
+  }
+
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
@@ -575,6 +583,266 @@ async function main(): Promise<void> {
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) =>
       writeGroupsSnapshot(gf, im, ag, rj),
+    // Self-configuration handlers (main group only)
+    installSkill: async (skillName: string) => {
+      try {
+        // Ensure upstream remote exists
+        try {
+          execSync('git remote get-url upstream', { stdio: 'pipe' });
+        } catch {
+          execSync('git remote add upstream https://github.com/qwibitai/nanoclaw.git', { stdio: 'pipe' });
+        }
+        // Fetch and merge the skill branch
+        execSync(`git fetch upstream skill/${skillName}`, { stdio: 'pipe' });
+        execSync(`git merge upstream/skill/${skillName} --no-edit`, {
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        // Rebuild
+        execSync('npm run build', { stdio: 'pipe' });
+        logger.info({ skillName }, 'Skill installed via IPC');
+        return { success: true, message: `Skill ${skillName} installed successfully` };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error({ skillName, err }, 'Failed to install skill via IPC');
+        return { success: false, message: `Failed to install skill: ${msg}` };
+      }
+    },
+    rebuildService: async () => {
+      try {
+        execSync('npm run build', { stdio: 'pipe' });
+        execSync('./container/build.sh', { stdio: 'pipe' });
+        // Restart via launchctl
+        execSync('launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist', { stdio: 'pipe' });
+        execSync('launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist', { stdio: 'pipe' });
+        return { success: true, message: 'Service rebuilt and restarted' };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, message: `Failed to rebuild: ${msg}` };
+      }
+    },
+    readEnv: (key: string) => process.env[key],
+    writeEnv: (key: string, value: string) => {
+      const envPath = path.join(process.cwd(), '.env');
+      let content = '';
+      if (fs.existsSync(envPath)) {
+        content = fs.readFileSync(envPath, 'utf-8');
+      }
+      const lines = content.split('\n');
+      const idx = lines.findIndex((l) => l.startsWith(`${key}=`));
+      if (idx >= 0) {
+        lines[idx] = `${key}=${value}`;
+      } else {
+        lines.push(`${key}=${value}`);
+      }
+      fs.writeFileSync(envPath, lines.join('\n'));
+      // Also sync to container env
+      const containerEnvPath = path.join(process.cwd(), 'data/env/env');
+      if (fs.existsSync(path.dirname(containerEnvPath))) {
+        fs.writeFileSync(containerEnvPath, lines.join('\n'));
+      }
+    },
+    // Calendar operations (main group only)
+    calendarList: async (days: number) => {
+      try {
+        const scriptPath = path.join(process.cwd(), 'scripts', 'calendar.sh');
+        const output = execSync(`${scriptPath} list ${days}`, {
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout: 15000,
+        });
+        return { success: true, events: output };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, error: msg };
+      }
+    },
+    calendarCreate: async (summary: string, start: string, end: string, location?: string, notes?: string) => {
+      try {
+        const scriptPath = path.join(process.cwd(), 'scripts', 'calendar.sh');
+        const args = ['create', `"${summary}"`, `"${start}"`, `"${end}"`];
+        if (location) args.push(`"${location}"`);
+        if (notes) args.push(`"${notes}"`);
+        execSync(`${scriptPath} ${args.join(' ')}`, {
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout: 15000,
+        });
+        return { success: true };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, error: msg };
+      }
+    },
+    calendarSearch: async (query: string) => {
+      try {
+        const scriptPath = path.join(process.cwd(), 'scripts', 'calendar.sh');
+        const output = execSync(`${scriptPath} search "${query}"`, {
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout: 15000,
+        });
+        return { success: true, results: output };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, error: msg };
+      }
+    },
+    // Email operations via Apple Mail
+    emailList: async (hours: number) => {
+      try {
+        const scriptPath = path.join(process.cwd(), 'scripts', 'get-mail.sh');
+        const output = execSync(`${scriptPath} ${hours}`, {
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout: 20000,
+        });
+        return { success: true, emails: output };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, error: msg };
+      }
+    },
+    emailSearch: async (query: string) => {
+      try {
+        // Use AppleScript to search Mail.app
+        const output = execSync(
+          `osascript -l JavaScript -e '
+            const Mail = Application("Mail");
+            const results = [];
+            const q = "${query.replace(/"/g, '\\"')}".toLowerCase();
+            for (const acct of Mail.accounts()) {
+              try {
+                const inbox = acct.mailboxes.byName("INBOX");
+                const msgs = inbox.messages();
+                for (let i = 0; i < Math.min(msgs.length, 200); i++) {
+                  try {
+                    const m = msgs[i];
+                    const subj = (m.subject() || "").toLowerCase();
+                    const from = (m.sender() || "").toLowerCase();
+                    if (subj.includes(q) || from.includes(q)) {
+                      results.push({subject: m.subject(), from: m.sender(), date: m.dateReceived().toISOString(), read: m.readStatus()});
+                      if (results.length >= 20) break;
+                    }
+                  } catch(e) {}
+                }
+              } catch(e) {}
+              if (results.length >= 20) break;
+            }
+            JSON.stringify(results, null, 2);
+          '`,
+          { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 20000 },
+        );
+        return { success: true, results: output };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, error: msg };
+      }
+    },
+    // Restart session — kill the running container so next message spawns a fresh one
+    restartSession: (groupFolder: string) => {
+      try {
+        const output = execSync(
+          `container ls --format json`,
+          { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+        );
+        const containers: { status: string; configuration: { id: string } }[] = JSON.parse(output || '[]');
+        for (const c of containers) {
+          if (c.status === 'running' && c.configuration.id.includes(groupFolder.replace(/_/g, '-'))) {
+            execSync(`container stop ${c.configuration.id}`, { stdio: 'pipe' });
+            logger.info({ container: c.configuration.id }, 'Container stopped via restart_session');
+          }
+        }
+      } catch (err) {
+        logger.error({ err, groupFolder }, 'Failed to restart session');
+      }
+    },
+    // Remote coding session — launches a coding agent on host in a tmux session
+    startCodingSession: async (projectDir: string, prompt?: string, command?: string) => {
+      try {
+        // Validate project directory exists
+        if (!fs.existsSync(projectDir)) {
+          return { success: false, error: `Directory not found: ${projectDir}` };
+        }
+        const sessionId = `claude-${Date.now()}`;
+        // Build command — default to claude in normal (safe) mode
+        let cmd: string;
+        if (command) {
+          cmd = command;
+        } else {
+          cmd = 'claude';
+        }
+        if (prompt) {
+          cmd += ` -p "${prompt.replace(/"/g, '\\"')}"`;
+        }
+        // Launch in tmux session with a login shell so PATH is correct.
+        // Use a temp script to avoid shell quoting hell with nested quotes.
+        // Use explicit socket so launchd and user terminal share the same tmux server.
+        const tmuxSocket = '/tmp/nanoclaw-tmux.sock';
+        const scriptPath = `/tmp/nanoclaw-session-${sessionId}.sh`;
+        const script = `#!/bin/zsh\nsource ~/.zshrc 2>/dev/null\ncd ${JSON.stringify(projectDir)} && ${cmd}\n`;
+        fs.writeFileSync(scriptPath, script, { mode: 0o755 });
+        execSync(
+          `/opt/homebrew/bin/tmux -S ${tmuxSocket} new-session -d -s ${sessionId} ${scriptPath}`,
+          { stdio: 'pipe', timeout: 10000 },
+        );
+        // Make socket accessible to the user
+        try { fs.chmodSync(tmuxSocket, 0o777); } catch { /* ignore */ }
+        logger.info({ sessionId, projectDir, prompt, command: cmd }, 'Coding session started');
+        return { success: true, sessionId };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, error: msg };
+      }
+    },
+    // Coding session management
+    listCodingSessions: async () => {
+      try {
+        const output = execSync('/opt/homebrew/bin/tmux -S /tmp/nanoclaw-tmux.sock list-sessions 2>/dev/null || echo "No sessions"', {
+          encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
+        }).trim();
+        return { success: true, sessions: output };
+      } catch {
+        return { success: true, sessions: 'No active tmux sessions' };
+      }
+    },
+    checkCodingSession: async (sessionId: string) => {
+      try {
+        // Capture the visible pane content
+        const output = execSync(
+          `/opt/homebrew/bin/tmux -S /tmp/nanoclaw-tmux.sock capture-pane -t ${sessionId} -p -S -50`,
+          { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 },
+        ).trim();
+        return { success: true, output: output || '(empty screen)' };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, error: `Session not found or error: ${msg}` };
+      }
+    },
+    sendToCodingSession: async (sessionId: string, input: string) => {
+      try {
+        // Send keys to the tmux session
+        execSync(
+          `/opt/homebrew/bin/tmux -S /tmp/nanoclaw-tmux.sock send-keys -t ${sessionId} ${JSON.stringify(input)} Enter`,
+          { stdio: 'pipe', timeout: 5000 },
+        );
+        return { success: true };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, error: msg };
+      }
+    },
+    stopCodingSession: async (sessionId: string) => {
+      try {
+        execSync(`/opt/homebrew/bin/tmux -S /tmp/nanoclaw-tmux.sock kill-session -t ${sessionId}`, {
+          stdio: 'pipe', timeout: 5000,
+        });
+        return { success: true };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, error: msg };
+      }
+    },
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();

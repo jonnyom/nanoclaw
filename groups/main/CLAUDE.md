@@ -67,11 +67,48 @@ Main has read-only access to the project and read-write access to its group fold
 |----------------|-----------|--------|
 | `/workspace/project` | Project root | read-only |
 | `/workspace/group` | `groups/main/` | read-write |
+| `/workspace/calendar` | Calendar data (JSON) | read-only |
+| `/workspace/mail` | Email data (JSON) | read-only |
 
 Key paths inside the container:
 - `/workspace/project/store/messages.db` - SQLite database
 - `/workspace/project/store/messages.db` (registered_groups table) - Group config
 - `/workspace/project/groups/` - All group folders
+- `/workspace/calendar/events.json` - Calendar events (refreshed each session)
+- `/workspace/mail/recent.json` - Recent emails from Apple Mail (refreshed each session)
+
+---
+
+## Daily Briefings
+
+You have access to calendar and email data for daily briefings:
+
+- **Calendar**: Read `/workspace/calendar/events.json` for upcoming events. Use IPC `calendar_list`, `calendar_create`, or `calendar_search` for live operations.
+- **Email**: Read `/workspace/mail/recent.json` for recent inbox emails. Use IPC `email_list` or `email_search` for live queries.
+
+For daily morning briefings, combine calendar and email data into a concise summary.
+
+---
+
+## Self-Configuration
+
+As the main group, you can install new skills and manage the system remotely:
+
+- **Install a skill**: Write IPC task `{"type": "install_skill", "skillName": "<name>", "requestId": "<id>"}` — fetches and merges the skill branch from upstream, then rebuilds.
+- **Rebuild service**: Write IPC task `{"type": "rebuild_service", "requestId": "<id>"}` — rebuilds code + container, restarts the service.
+- **Read/write env vars**: `{"type": "read_env", "key": "...", "requestId": "..."}` and `{"type": "write_env", "key": "...", "value": "...", "requestId": "..."}`.
+
+Responses are written to `/workspace/ipc/<group>/responses/<requestId>.json`.
+
+---
+
+## Remote Coding Sessions
+
+You can start a Claude Code session on the host machine (outside the container) for remote coding:
+
+Write IPC task: `{"type": "start_coding_session", "projectDir": "/path/to/project", "prompt": "optional initial prompt", "requestId": "<id>"}`
+
+This launches Claude Code in a tmux session on the host. The user can attach to it remotely via SSH + tmux. The response includes the `sessionId` (tmux session name).
 
 ---
 

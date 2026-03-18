@@ -2,8 +2,9 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, exec, spawn } from 'child_process';
+import { ChildProcess, exec, execSync, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
@@ -32,6 +33,21 @@ import { RegisteredGroup } from './types.js';
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+
+/**
+ * Read GitHub OAuth token from gh CLI.
+ */
+function getGitHubToken(): string | null {
+  try {
+    const result = execSync('gh auth token', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    return result || null;
+  } catch {
+    return null;
+  }
+}
 
 export interface ContainerInput {
   prompt: string;
@@ -77,15 +93,8 @@ function buildVolumeMounts(
     });
 
     // Shadow .env so the agent cannot read secrets from the mounted project root.
-    // Credentials are injected by the credential proxy, never exposed to containers.
-    const envFile = path.join(projectRoot, '.env');
-    if (fs.existsSync(envFile)) {
-      mounts.push({
-        hostPath: '/dev/null',
-        containerPath: '/workspace/project/.env',
-        readonly: true,
-      });
-    }
+    // Apple Container doesn't support file mounts (only directory mounts).
+    // The entrypoint handles .env shadowing internally via mount --bind.
 
     // Main also gets its group folder as the working directory
     mounts.push({
@@ -175,9 +184,9 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Copy agent-runner source into a per-group writable location so agents
-  // can customize it (add tools, change behavior) without affecting other
-  // groups. Recompiled on container startup via entrypoint.sh.
+  // Sync agent-runner source from canonical location into per-group directory.
+  // Always overwrite so that skill installs (which modify the canonical source)
+  // are picked up by the next container session. Recompiled on startup via entrypoint.sh.
   const agentRunnerSrc = path.join(
     projectRoot,
     'container',
@@ -190,14 +199,60 @@ function buildVolumeMounts(
     group.folder,
     'agent-runner-src',
   );
-  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
-    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+  if (fs.existsSync(agentRunnerSrc)) {
+    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true, force: true });
   }
   mounts.push({
     hostPath: groupAgentRunnerDir,
     containerPath: '/app/src',
     readonly: false,
   });
+
+  // Mount GitHub CLI config for private repo access (main group only)
+  if (isMain) {
+    const ghConfigDir = path.join(os.homedir(), '.config', 'gh');
+    if (fs.existsSync(ghConfigDir)) {
+      mounts.push({
+        hostPath: ghConfigDir,
+        containerPath: '/home/node/.config/gh',
+        readonly: true,
+      });
+    }
+
+    // Mount calendar data for daily briefings
+    const calendarDir = path.join(DATA_DIR, 'calendar');
+    fs.mkdirSync(calendarDir, { recursive: true });
+    try {
+      const scriptPath = path.join(process.cwd(), 'scripts', 'get-calendar-events.sh');
+      if (fs.existsSync(scriptPath)) {
+        execSync(`${scriptPath} 7`, { stdio: 'pipe', timeout: 10000 });
+      }
+    } catch {
+      // Calendar refresh failed, use cached data if available
+    }
+    mounts.push({
+      hostPath: calendarDir,
+      containerPath: '/workspace/calendar',
+      readonly: true,
+    });
+
+    // Mount email data for daily briefings
+    const mailDir = path.join(DATA_DIR, 'mail');
+    fs.mkdirSync(mailDir, { recursive: true });
+    try {
+      const mailScript = path.join(process.cwd(), 'scripts', 'get-mail.sh');
+      if (fs.existsSync(mailScript)) {
+        execSync(`${mailScript} 24`, { stdio: 'pipe', timeout: 15000 });
+      }
+    } catch {
+      // Mail refresh failed, use cached data if available
+    }
+    mounts.push({
+      hostPath: mailDir,
+      containerPath: '/workspace/mail',
+      readonly: true,
+    });
+  }
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
@@ -218,6 +273,13 @@ function buildContainerArgs(
   isMain: boolean,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  // Increase memory for main group (agents may use browser automation)
+  if (isMain) {
+    args.push('--memory', '4GiB');
+  } else {
+    args.push('--memory', '2GiB');
+  }
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
@@ -257,6 +319,14 @@ function buildContainerArgs(
       args.push('--user', `${hostUid}:${hostGid}`);
     }
     args.push('-e', 'HOME=/home/node');
+  }
+
+  // Pass GitHub token for private repo access (main group only)
+  if (isMain) {
+    const ghToken = getGitHubToken();
+    if (ghToken) {
+      args.push('-e', `GH_TOKEN=${ghToken}`);
+    }
   }
 
   for (const mount of mounts) {

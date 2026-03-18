@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./container/build.sh 2>&1)",
+      "Bash(mkdir:*)",
+      "Bash(mkdir -p /tmp/test-rw)",
+      "Bash(container run:*)",
+      "Read(//tmp/test-rw/**)",
+      "Bash(rm -rf /tmp/test-rw)",
+      "Bash(npm run:*)",
+      "Bash(launchctl unload:*)",
+      "Bash(CONTAINER_RUNTIME=docker ./container/build.sh 2>&1 | tail -20)",
+      "Bash(docker info:*)",
+      "Bash(bash setup.sh 2>&1)",
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)",
+      "Bash(git checkout:*)",
+      "Bash(npm test:*)",
+      "Bash(npm rebuild:*)",
+      "Bash(./scripts/get-calendar-events.sh 7 2>&1 | tail -20)",
+      "Bash(chmod:*)",
+      "Bash(container ls:*)",
+      "Bash(container exec:*)",
+      "Bash(python3 -c \"import sys,json; [print\\(c[''''configuration''''][''''id'''']\\) for c in json.loads\\(sys.stdin.read\\(\\)\\) if c[''''configuration''''][''''id''''].startswith\\(''''nanoclaw-''''\\)]\")",
+      "Bash(/opt/homebrew/bin/tmux capture-pane:*)",
+      "Bash(/opt/homebrew/bin/tmux kill-session:*)",
+      "Bash(/opt/homebrew/bin/tmux new-session:*)",
+      "Bash(/opt/homebrew/bin/tmux list-sessions:*)",
+      "Bash(echo \"tmux exit: $?\")",
+      "WebFetch(domain:downloads.raspberrypi.com)",
+      "Bash(diskutil list:*)",
+      "Bash(cat /Volumes/bootfs/ssh_keys/*)",
+      "Bash(ssh pi:*)"
+    ]
+  }
+}

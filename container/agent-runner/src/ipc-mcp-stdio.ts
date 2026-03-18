@@ -333,6 +333,514 @@ Use available_groups.json to find the JID for a group. The folder name must be c
   },
 );
 
+// Calendar operations (main group only)
+server.tool(
+  'calendar_list',
+  'List upcoming calendar events. Main group only. Returns events for the next N days.',
+  {
+    days: z.number().default(30).describe('Number of days to look ahead (default 30)'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can access calendar.' }],
+        isError: true,
+      };
+    }
+
+    const requestId = `cal-${Date.now()}`;
+    const data = {
+      type: 'calendar_list',
+      days: args.days,
+      requestId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    // Wait for response
+    const responsePath = path.join(IPC_DIR, 'responses', `${requestId}.json`);
+    const maxWait = 10000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (fs.existsSync(responsePath)) {
+        const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+        fs.unlinkSync(responsePath);
+        if (response.success) {
+          return { content: [{ type: 'text' as const, text: response.events || 'No events found.' }] };
+        }
+        return { content: [{ type: 'text' as const, text: `Error: ${response.error}` }], isError: true };
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'Timeout waiting for calendar response.' }], isError: true };
+  },
+);
+
+server.tool(
+  'calendar_create',
+  'Create a new calendar event. Main group only.',
+  {
+    summary: z.string().describe('Event title/summary'),
+    start: z.string().describe('Start time in format "YYYY-MM-DD HH:MM" (e.g., "2026-03-15 14:00")'),
+    end: z.string().describe('End time in format "YYYY-MM-DD HH:MM" (e.g., "2026-03-15 15:00")'),
+    location: z.string().optional().describe('Optional location'),
+    notes: z.string().optional().describe('Optional notes/description'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can access calendar.' }],
+        isError: true,
+      };
+    }
+
+    const requestId = `cal-${Date.now()}`;
+    const data: Record<string, string | number | undefined> = {
+      type: 'calendar_create',
+      summary: args.summary,
+      startDate: args.start,
+      endDate: args.end,
+      location: args.location,
+      notes: args.notes,
+      requestId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    // Wait for response
+    const responsePath = path.join(IPC_DIR, 'responses', `${requestId}.json`);
+    const maxWait = 15000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (fs.existsSync(responsePath)) {
+        const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+        fs.unlinkSync(responsePath);
+        if (response.success) {
+          return { content: [{ type: 'text' as const, text: `Event created: ${args.summary}` }] };
+        }
+        return { content: [{ type: 'text' as const, text: `Error: ${response.error}` }], isError: true };
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'Timeout waiting for calendar response.' }], isError: true };
+  },
+);
+
+server.tool(
+  'calendar_search',
+  'Search calendar events by title/summary. Main group only.',
+  {
+    query: z.string().describe('Search query to match against event titles'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can access calendar.' }],
+        isError: true,
+      };
+    }
+
+    const requestId = `cal-${Date.now()}`;
+    const data = {
+      type: 'calendar_search',
+      query: args.query,
+      requestId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    // Wait for response
+    const responsePath = path.join(IPC_DIR, 'responses', `${requestId}.json`);
+    const maxWait = 10000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (fs.existsSync(responsePath)) {
+        const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+        fs.unlinkSync(responsePath);
+        if (response.success) {
+          return { content: [{ type: 'text' as const, text: response.results || 'No matching events found.' }] };
+        }
+        return { content: [{ type: 'text' as const, text: `Error: ${response.error}` }], isError: true };
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'Timeout waiting for calendar response.' }], isError: true };
+  },
+);
+
+// Self-configuration tools (main group only)
+server.tool(
+  'install_skill',
+  'Install a NanoClaw skill from upstream. Main group only. Fetches and merges the skill branch, then rebuilds.',
+  {
+    skill_name: z.string().describe('Name of the skill to install (e.g., "add-slack", "add-gmail", "add-voice-transcription")'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can install skills.' }],
+        isError: true,
+      };
+    }
+
+    const requestId = `skill-${Date.now()}`;
+    writeIpcFile(TASKS_DIR, {
+      type: 'install_skill',
+      skillName: args.skill_name,
+      requestId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    const responsePath = path.join(IPC_DIR, 'responses', `${requestId}.json`);
+    const maxWait = 60000; // Skills can take a while to install
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, 1000));
+      if (fs.existsSync(responsePath)) {
+        const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+        fs.unlinkSync(responsePath);
+        return { content: [{ type: 'text' as const, text: response.message || (response.success ? 'Skill installed.' : 'Install failed.') }], isError: !response.success };
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'Timeout waiting for skill install.' }], isError: true };
+  },
+);
+
+server.tool(
+  'rebuild_service',
+  'Rebuild NanoClaw (code + container) and restart the service. Main group only.',
+  {},
+  async () => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can rebuild.' }],
+        isError: true,
+      };
+    }
+
+    const requestId = `rebuild-${Date.now()}`;
+    writeIpcFile(TASKS_DIR, {
+      type: 'rebuild_service',
+      requestId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    const responsePath = path.join(IPC_DIR, 'responses', `${requestId}.json`);
+    const maxWait = 120000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, 2000));
+      if (fs.existsSync(responsePath)) {
+        const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+        fs.unlinkSync(responsePath);
+        return { content: [{ type: 'text' as const, text: response.message || (response.success ? 'Rebuilt.' : 'Rebuild failed.') }], isError: !response.success };
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'Timeout waiting for rebuild.' }], isError: true };
+  },
+);
+
+server.tool(
+  'restart_session',
+  'Restart your own container session. Use this after installing skills or when you need a fresh session with updated tools. Main group only. Your current session will end — send a message to start a new one.',
+  {},
+  async () => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can restart sessions.' }],
+        isError: true,
+      };
+    }
+
+    const requestId = `restart-${Date.now()}`;
+    writeIpcFile(TASKS_DIR, {
+      type: 'restart_session',
+      requestId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    return { content: [{ type: 'text' as const, text: 'Session restart requested. This session will end shortly — send a new message to start a fresh session with updated tools.' }] };
+  },
+);
+
+server.tool(
+  'start_coding_session',
+  `Launch a coding agent on the host machine (outside the container) in a tmux session. Main group only. The user can attach to the session remotely via SSH.
+
+Available commands:
+• "claude" (default) — Claude Code with normal permission checks
+• "ccs glm" — cheaper GLM model, good for overnight/batch tasks to save tokens
+• "ccs kimi" — Kimi model
+• Any other CLI command that accepts -p for prompts
+
+The session runs on the HOST machine (not in a container), so it has real access to the filesystem. Claude's normal permission mode applies — it will ask before destructive actions.`,
+  {
+    project_dir: z.string().describe('Absolute path to the project directory on the host (e.g., "/Users/jonathanomahony/personal/ravell-parent")'),
+    prompt: z.string().optional().describe('Optional initial prompt for the coding agent'),
+    command: z.string().optional().describe('Command to run (default: "claude"). Use "ccs glm" for cheaper overnight tasks.'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can start coding sessions.' }],
+        isError: true,
+      };
+    }
+
+    const requestId = `code-${Date.now()}`;
+    writeIpcFile(TASKS_DIR, {
+      type: 'start_coding_session',
+      projectDir: args.project_dir,
+      prompt: args.prompt,
+      command: args.command,
+      requestId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    const responsePath = path.join(IPC_DIR, 'responses', `${requestId}.json`);
+    const maxWait = 15000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (fs.existsSync(responsePath)) {
+        const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+        fs.unlinkSync(responsePath);
+        if (response.success) {
+          return { content: [{ type: 'text' as const, text: `Coding session started: ${response.sessionId}\nAttach with: tmux attach -t ${response.sessionId}` }] };
+        }
+        return { content: [{ type: 'text' as const, text: `Error: ${response.error}` }], isError: true };
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'Timeout waiting for coding session start.' }], isError: true };
+  },
+);
+
+// Coding session management (main group only)
+server.tool(
+  'list_coding_sessions',
+  'List all active tmux coding sessions on the host. Main group only.',
+  {},
+  async () => {
+    if (!isMain) {
+      return { content: [{ type: 'text' as const, text: 'Only the main group can manage coding sessions.' }], isError: true };
+    }
+    const requestId = `cs-${Date.now()}`;
+    writeIpcFile(TASKS_DIR, { type: 'list_coding_sessions', requestId, groupFolder, timestamp: new Date().toISOString() });
+    const responsePath = path.join(IPC_DIR, 'responses', `${requestId}.json`);
+    const maxWait = 5000;
+    const startTime = Date.now();
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (fs.existsSync(responsePath)) {
+        const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+        fs.unlinkSync(responsePath);
+        return { content: [{ type: 'text' as const, text: response.sessions || 'No sessions.' }] };
+      }
+    }
+    return { content: [{ type: 'text' as const, text: 'Timeout.' }], isError: true };
+  },
+);
+
+server.tool(
+  'check_coding_session',
+  'Read the last ~50 lines of visible output from a tmux coding session. Use this to see what the coding agent is doing, if it\'s stuck, or what it produced. Main group only.',
+  {
+    session_id: z.string().describe('The tmux session ID (e.g., "claude-1773516176283")'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return { content: [{ type: 'text' as const, text: 'Only the main group can manage coding sessions.' }], isError: true };
+    }
+    const requestId = `cs-${Date.now()}`;
+    writeIpcFile(TASKS_DIR, { type: 'check_coding_session', sessionId: args.session_id, requestId, groupFolder, timestamp: new Date().toISOString() });
+    const responsePath = path.join(IPC_DIR, 'responses', `${requestId}.json`);
+    const maxWait = 5000;
+    const startTime = Date.now();
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (fs.existsSync(responsePath)) {
+        const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+        fs.unlinkSync(responsePath);
+        if (response.success) {
+          return { content: [{ type: 'text' as const, text: response.output || '(empty)' }] };
+        }
+        return { content: [{ type: 'text' as const, text: `Error: ${response.error}` }], isError: true };
+      }
+    }
+    return { content: [{ type: 'text' as const, text: 'Timeout.' }], isError: true };
+  },
+);
+
+server.tool(
+  'send_to_coding_session',
+  'Send input/text to a running tmux coding session. The text is typed into the session followed by Enter. Use this to answer prompts, provide instructions, or interact with the coding agent. Main group only.',
+  {
+    session_id: z.string().describe('The tmux session ID'),
+    input: z.string().describe('Text to send to the session (followed by Enter)'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return { content: [{ type: 'text' as const, text: 'Only the main group can manage coding sessions.' }], isError: true };
+    }
+    const requestId = `cs-${Date.now()}`;
+    writeIpcFile(TASKS_DIR, { type: 'send_to_coding_session', sessionId: args.session_id, input: args.input, requestId, groupFolder, timestamp: new Date().toISOString() });
+    const responsePath = path.join(IPC_DIR, 'responses', `${requestId}.json`);
+    const maxWait = 5000;
+    const startTime = Date.now();
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (fs.existsSync(responsePath)) {
+        const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+        fs.unlinkSync(responsePath);
+        if (response.success) {
+          return { content: [{ type: 'text' as const, text: 'Input sent.' }] };
+        }
+        return { content: [{ type: 'text' as const, text: `Error: ${response.error}` }], isError: true };
+      }
+    }
+    return { content: [{ type: 'text' as const, text: 'Timeout.' }], isError: true };
+  },
+);
+
+server.tool(
+  'stop_coding_session',
+  'Kill a tmux coding session. Use this to stop a coding agent that\'s done or stuck. Main group only.',
+  {
+    session_id: z.string().describe('The tmux session ID to kill'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return { content: [{ type: 'text' as const, text: 'Only the main group can manage coding sessions.' }], isError: true };
+    }
+    const requestId = `cs-${Date.now()}`;
+    writeIpcFile(TASKS_DIR, { type: 'stop_coding_session', sessionId: args.session_id, requestId, groupFolder, timestamp: new Date().toISOString() });
+    const responsePath = path.join(IPC_DIR, 'responses', `${requestId}.json`);
+    const maxWait = 5000;
+    const startTime = Date.now();
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (fs.existsSync(responsePath)) {
+        const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+        fs.unlinkSync(responsePath);
+        if (response.success) {
+          return { content: [{ type: 'text' as const, text: `Session ${args.session_id} killed.` }] };
+        }
+        return { content: [{ type: 'text' as const, text: `Error: ${response.error}` }], isError: true };
+      }
+    }
+    return { content: [{ type: 'text' as const, text: 'Timeout.' }], isError: true };
+  },
+);
+
+// Email tools (main group only)
+server.tool(
+  'email_list',
+  'List recent emails from Apple Mail inbox. Main group only.',
+  {
+    hours: z.number().default(24).describe('Number of hours to look back (default 24)'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can access email.' }],
+        isError: true,
+      };
+    }
+
+    const requestId = `email-${Date.now()}`;
+    writeIpcFile(TASKS_DIR, {
+      type: 'email_list',
+      hours: args.hours,
+      requestId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    const responsePath = path.join(IPC_DIR, 'responses', `${requestId}.json`);
+    const maxWait = 20000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (fs.existsSync(responsePath)) {
+        const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+        fs.unlinkSync(responsePath);
+        if (response.success) {
+          return { content: [{ type: 'text' as const, text: response.emails || 'No emails found.' }] };
+        }
+        return { content: [{ type: 'text' as const, text: `Error: ${response.error}` }], isError: true };
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'Timeout waiting for email response.' }], isError: true };
+  },
+);
+
+server.tool(
+  'email_search',
+  'Search emails by subject or sender. Main group only.',
+  {
+    query: z.string().describe('Search query to match against email subjects and senders'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can access email.' }],
+        isError: true,
+      };
+    }
+
+    const requestId = `email-${Date.now()}`;
+    writeIpcFile(TASKS_DIR, {
+      type: 'email_search',
+      query: args.query,
+      requestId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    const responsePath = path.join(IPC_DIR, 'responses', `${requestId}.json`);
+    const maxWait = 20000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (fs.existsSync(responsePath)) {
+        const response = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+        fs.unlinkSync(responsePath);
+        if (response.success) {
+          return { content: [{ type: 'text' as const, text: response.results || 'No matching emails found.' }] };
+        }
+        return { content: [{ type: 'text' as const, text: `Error: ${response.error}` }], isError: true };
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: 'Timeout waiting for email response.' }], isError: true };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
