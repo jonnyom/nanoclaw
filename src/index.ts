@@ -590,7 +590,10 @@ async function main(): Promise<void> {
         try {
           execSync('git remote get-url upstream', { stdio: 'pipe' });
         } catch {
-          execSync('git remote add upstream https://github.com/qwibitai/nanoclaw.git', { stdio: 'pipe' });
+          execSync(
+            'git remote add upstream https://github.com/qwibitai/nanoclaw.git',
+            { stdio: 'pipe' },
+          );
         }
         // Fetch and merge the skill branch
         execSync(`git fetch upstream skill/${skillName}`, { stdio: 'pipe' });
@@ -601,7 +604,10 @@ async function main(): Promise<void> {
         // Rebuild
         execSync('npm run build', { stdio: 'pipe' });
         logger.info({ skillName }, 'Skill installed via IPC');
-        return { success: true, message: `Skill ${skillName} installed successfully` };
+        return {
+          success: true,
+          message: `Skill ${skillName} installed successfully`,
+        };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.error({ skillName, err }, 'Failed to install skill via IPC');
@@ -613,8 +619,12 @@ async function main(): Promise<void> {
         execSync('npm run build', { stdio: 'pipe' });
         execSync('./container/build.sh', { stdio: 'pipe' });
         // Restart via launchctl
-        execSync('launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist', { stdio: 'pipe' });
-        execSync('launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist', { stdio: 'pipe' });
+        execSync('launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist', {
+          stdio: 'pipe',
+        });
+        execSync('launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist', {
+          stdio: 'pipe',
+        });
         return { success: true, message: 'Service rebuilt and restarted' };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -657,7 +667,13 @@ async function main(): Promise<void> {
         return { success: false, error: msg };
       }
     },
-    calendarCreate: async (summary: string, start: string, end: string, location?: string, notes?: string) => {
+    calendarCreate: async (
+      summary: string,
+      start: string,
+      end: string,
+      location?: string,
+      notes?: string,
+    ) => {
       try {
         const scriptPath = path.join(process.cwd(), 'scripts', 'calendar.sh');
         const args = ['create', `"${summary}"`, `"${start}"`, `"${end}"`];
@@ -731,7 +747,11 @@ async function main(): Promise<void> {
             }
             JSON.stringify(results, null, 2);
           '`,
-          { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 20000 },
+          {
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+            timeout: 20000,
+          },
         );
         return { success: true, results: output };
       } catch (err) {
@@ -742,15 +762,22 @@ async function main(): Promise<void> {
     // Restart session — kill the running container so next message spawns a fresh one
     restartSession: (groupFolder: string) => {
       try {
-        const output = execSync(
-          `container ls --format json`,
-          { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
-        );
-        const containers: { status: string; configuration: { id: string } }[] = JSON.parse(output || '[]');
+        const output = execSync(`container ls --format json`, {
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        const containers: { status: string; configuration: { id: string } }[] =
+          JSON.parse(output || '[]');
         for (const c of containers) {
-          if (c.status === 'running' && c.configuration.id.includes(groupFolder.replace(/_/g, '-'))) {
+          if (
+            c.status === 'running' &&
+            c.configuration.id.includes(groupFolder.replace(/_/g, '-'))
+          ) {
             execSync(`container stop ${c.configuration.id}`, { stdio: 'pipe' });
-            logger.info({ container: c.configuration.id }, 'Container stopped via restart_session');
+            logger.info(
+              { container: c.configuration.id },
+              'Container stopped via restart_session',
+            );
           }
         }
       } catch (err) {
@@ -758,11 +785,18 @@ async function main(): Promise<void> {
       }
     },
     // Remote coding session — launches a coding agent on host in a tmux session
-    startCodingSession: async (projectDir: string, prompt?: string, command?: string) => {
+    startCodingSession: async (
+      projectDir: string,
+      prompt?: string,
+      command?: string,
+    ) => {
       try {
         // Validate project directory exists
         if (!fs.existsSync(projectDir)) {
-          return { success: false, error: `Directory not found: ${projectDir}` };
+          return {
+            success: false,
+            error: `Directory not found: ${projectDir}`,
+          };
         }
         const sessionId = `claude-${Date.now()}`;
         // Build command — default to claude in normal (safe) mode
@@ -787,8 +821,15 @@ async function main(): Promise<void> {
           { stdio: 'pipe', timeout: 10000 },
         );
         // Make socket accessible to the user
-        try { fs.chmodSync(tmuxSocket, 0o777); } catch { /* ignore */ }
-        logger.info({ sessionId, projectDir, prompt, command: cmd }, 'Coding session started');
+        try {
+          fs.chmodSync(tmuxSocket, 0o777);
+        } catch {
+          /* ignore */
+        }
+        logger.info(
+          { sessionId, projectDir, prompt, command: cmd },
+          'Coding session started',
+        );
         return { success: true, sessionId };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -798,9 +839,13 @@ async function main(): Promise<void> {
     // Coding session management
     listCodingSessions: async () => {
       try {
-        const output = execSync('/opt/homebrew/bin/tmux -S /tmp/nanoclaw-tmux.sock list-sessions 2>/dev/null || echo "No sessions"', {
-          encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
-        }).trim();
+        const output = execSync(
+          '/opt/homebrew/bin/tmux -S /tmp/nanoclaw-tmux.sock list-sessions 2>/dev/null || echo "No sessions"',
+          {
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+          },
+        ).trim();
         return { success: true, sessions: output };
       } catch {
         return { success: true, sessions: 'No active tmux sessions' };
@@ -834,9 +879,13 @@ async function main(): Promise<void> {
     },
     stopCodingSession: async (sessionId: string) => {
       try {
-        execSync(`/opt/homebrew/bin/tmux -S /tmp/nanoclaw-tmux.sock kill-session -t ${sessionId}`, {
-          stdio: 'pipe', timeout: 5000,
-        });
+        execSync(
+          `/opt/homebrew/bin/tmux -S /tmp/nanoclaw-tmux.sock kill-session -t ${sessionId}`,
+          {
+            stdio: 'pipe',
+            timeout: 5000,
+          },
+        );
         return { success: true };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

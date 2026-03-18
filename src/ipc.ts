@@ -11,10 +11,7 @@ import {
   TIMEZONE,
   TELEGRAM_BOT_POOL,
 } from './config.js';
-import {
-  sendPoolMessage,
-  hasBotPool,
-} from './channels/telegram.js';
+import { sendPoolMessage, hasBotPool } from './channels/telegram.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
@@ -45,28 +42,62 @@ export interface IpcDeps {
     registeredJids: Set<string>,
   ) => void;
   // Optional: self-configuration actions (main group only)
-  installSkill?: (skillName: string) => Promise<{ success: boolean; message: string }>;
+  installSkill?: (
+    skillName: string,
+  ) => Promise<{ success: boolean; message: string }>;
   rebuildService?: () => Promise<{ success: boolean; message: string }>;
   readEnv?: (key: string) => string | undefined;
   writeEnv?: (key: string, value: string) => void;
   // Calendar data provider
-  getCalendarEvents?: (startDate: Date, endDate: Date) => Promise<CalendarEvent[]>;
+  getCalendarEvents?: (
+    startDate: Date,
+    endDate: Date,
+  ) => Promise<CalendarEvent[]>;
   // Calendar operations (main group only)
-  calendarList?: (days: number) => Promise<{ success: boolean; events?: string; error?: string }>;
-  calendarCreate?: (summary: string, start: string, end: string, location?: string, notes?: string) => Promise<{ success: boolean; error?: string }>;
-  calendarSearch?: (query: string) => Promise<{ success: boolean; results?: string; error?: string }>;
+  calendarList?: (
+    days: number,
+  ) => Promise<{ success: boolean; events?: string; error?: string }>;
+  calendarCreate?: (
+    summary: string,
+    start: string,
+    end: string,
+    location?: string,
+    notes?: string,
+  ) => Promise<{ success: boolean; error?: string }>;
+  calendarSearch?: (
+    query: string,
+  ) => Promise<{ success: boolean; results?: string; error?: string }>;
   // Email operations (main group only)
-  emailList?: (hours: number) => Promise<{ success: boolean; emails?: string; error?: string }>;
-  emailSearch?: (query: string) => Promise<{ success: boolean; results?: string; error?: string }>;
+  emailList?: (
+    hours: number,
+  ) => Promise<{ success: boolean; emails?: string; error?: string }>;
+  emailSearch?: (
+    query: string,
+  ) => Promise<{ success: boolean; results?: string; error?: string }>;
   // Remote coding session (main group only)
-  startCodingSession?: (projectDir: string, prompt?: string, command?: string) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
+  startCodingSession?: (
+    projectDir: string,
+    prompt?: string,
+    command?: string,
+  ) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
   // Restart the current container session (main group only)
   restartSession?: (groupFolder: string) => void;
   // Coding session management (main group only)
-  listCodingSessions?: () => Promise<{ success: boolean; sessions?: string; error?: string }>;
-  checkCodingSession?: (sessionId: string) => Promise<{ success: boolean; output?: string; error?: string }>;
-  sendToCodingSession?: (sessionId: string, input: string) => Promise<{ success: boolean; error?: string }>;
-  stopCodingSession?: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+  listCodingSessions?: () => Promise<{
+    success: boolean;
+    sessions?: string;
+    error?: string;
+  }>;
+  checkCodingSession?: (
+    sessionId: string,
+  ) => Promise<{ success: boolean; output?: string; error?: string }>;
+  sendToCodingSession?: (
+    sessionId: string,
+    input: string,
+  ) => Promise<{ success: boolean; error?: string }>;
+  stopCodingSession?: (
+    sessionId: string,
+  ) => Promise<{ success: boolean; error?: string }>;
 }
 
 let ipcWatcherRunning = false;
@@ -129,7 +160,8 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   // Only use pool bots for sub-agents, not the main assistant
                   if (
                     data.sender &&
-                    data.sender.toLowerCase() !== ASSISTANT_NAME.toLowerCase() &&
+                    data.sender.toLowerCase() !==
+                      ASSISTANT_NAME.toLowerCase() &&
                     data.chatJid.startsWith('tg:') &&
                     hasBotPool()
                   ) {
@@ -533,7 +565,10 @@ export async function processTaskIpc(
     // Self-configuration actions (main group only)
     case 'install_skill': {
       if (!isMain) {
-        logger.warn({ sourceGroup }, 'Unauthorized install_skill attempt blocked');
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized install_skill attempt blocked',
+        );
         break;
       }
       if (!deps.installSkill) {
@@ -554,7 +589,10 @@ export async function processTaskIpc(
 
     case 'rebuild_service': {
       if (!isMain) {
-        logger.warn({ sourceGroup }, 'Unauthorized rebuild_service attempt blocked');
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized rebuild_service attempt blocked',
+        );
         break;
       }
       if (!deps.rebuildService) {
@@ -595,7 +633,11 @@ export async function processTaskIpc(
         logger.warn('writeEnv handler not configured');
         break;
       }
-      if (data.key && typeof data.key === 'string' && data.value !== undefined) {
+      if (
+        data.key &&
+        typeof data.key === 'string' &&
+        data.value !== undefined
+      ) {
         deps.writeEnv(data.key, String(data.value));
         logger.info({ key: data.key }, 'Env var written via IPC');
         writeIpcResponse(sourceGroup, data.requestId, { success: true });
@@ -605,7 +647,10 @@ export async function processTaskIpc(
 
     case 'calendar_list': {
       if (!isMain) {
-        logger.warn({ sourceGroup }, 'Unauthorized calendar_list attempt blocked');
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized calendar_list attempt blocked',
+        );
         break;
       }
       if (!deps.calendarList) {
@@ -621,7 +666,10 @@ export async function processTaskIpc(
 
     case 'calendar_create': {
       if (!isMain) {
-        logger.warn({ sourceGroup }, 'Unauthorized calendar_create attempt blocked');
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized calendar_create attempt blocked',
+        );
         break;
       }
       if (!deps.calendarCreate) {
@@ -636,7 +684,10 @@ export async function processTaskIpc(
           data.location,
           data.notes,
         );
-        logger.info({ summary: data.summary, success: result.success }, 'Calendar create via IPC');
+        logger.info(
+          { summary: data.summary, success: result.success },
+          'Calendar create via IPC',
+        );
         writeIpcResponse(sourceGroup, data.requestId, result);
       }
       break;
@@ -644,7 +695,10 @@ export async function processTaskIpc(
 
     case 'calendar_search': {
       if (!isMain) {
-        logger.warn({ sourceGroup }, 'Unauthorized calendar_search attempt blocked');
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized calendar_search attempt blocked',
+        );
         break;
       }
       if (!deps.calendarSearch) {
@@ -653,7 +707,10 @@ export async function processTaskIpc(
       }
       if (data.query) {
         const result = await deps.calendarSearch(data.query);
-        logger.info({ query: data.query, success: result.success }, 'Calendar search via IPC');
+        logger.info(
+          { query: data.query, success: result.success },
+          'Calendar search via IPC',
+        );
         writeIpcResponse(sourceGroup, data.requestId, result);
       }
       break;
@@ -670,14 +727,20 @@ export async function processTaskIpc(
       }
       const hours = data.hours ?? 24;
       const emailResult = await deps.emailList(hours);
-      logger.info({ hours, success: emailResult.success }, 'Email list via IPC');
+      logger.info(
+        { hours, success: emailResult.success },
+        'Email list via IPC',
+      );
       writeIpcResponse(sourceGroup, data.requestId, emailResult);
       break;
     }
 
     case 'email_search': {
       if (!isMain) {
-        logger.warn({ sourceGroup }, 'Unauthorized email_search attempt blocked');
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized email_search attempt blocked',
+        );
         break;
       }
       if (!deps.emailSearch) {
@@ -686,7 +749,10 @@ export async function processTaskIpc(
       }
       if (data.query) {
         const emailSearchResult = await deps.emailSearch(data.query);
-        logger.info({ query: data.query, success: emailSearchResult.success }, 'Email search via IPC');
+        logger.info(
+          { query: data.query, success: emailSearchResult.success },
+          'Email search via IPC',
+        );
         writeIpcResponse(sourceGroup, data.requestId, emailSearchResult);
       }
       break;
@@ -694,21 +760,30 @@ export async function processTaskIpc(
 
     case 'restart_session': {
       if (!isMain) {
-        logger.warn({ sourceGroup }, 'Unauthorized restart_session attempt blocked');
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized restart_session attempt blocked',
+        );
         break;
       }
       if (deps.restartSession) {
         logger.info({ sourceGroup }, 'Session restart requested via IPC');
         // Small delay so the IPC response can be written before the container dies
         setTimeout(() => deps.restartSession!(sourceGroup), 1000);
-        writeIpcResponse(sourceGroup, data.requestId, { success: true, message: 'Restarting session...' });
+        writeIpcResponse(sourceGroup, data.requestId, {
+          success: true,
+          message: 'Restarting session...',
+        });
       }
       break;
     }
 
     case 'start_coding_session': {
       if (!isMain) {
-        logger.warn({ sourceGroup }, 'Unauthorized start_coding_session attempt blocked');
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized start_coding_session attempt blocked',
+        );
         break;
       }
       if (!deps.startCodingSession) {
@@ -716,7 +791,11 @@ export async function processTaskIpc(
         break;
       }
       if (data.projectDir) {
-        const codingResult = await deps.startCodingSession(data.projectDir, data.prompt, data.command);
+        const codingResult = await deps.startCodingSession(
+          data.projectDir,
+          data.prompt,
+          data.command,
+        );
         logger.info(
           { projectDir: data.projectDir, success: codingResult.success },
           'Coding session started via IPC',
@@ -728,7 +807,10 @@ export async function processTaskIpc(
 
     case 'list_coding_sessions': {
       if (!isMain) {
-        logger.warn({ sourceGroup }, 'Unauthorized list_coding_sessions attempt blocked');
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized list_coding_sessions attempt blocked',
+        );
         break;
       }
       if (deps.listCodingSessions) {
@@ -740,7 +822,10 @@ export async function processTaskIpc(
 
     case 'check_coding_session': {
       if (!isMain) {
-        logger.warn({ sourceGroup }, 'Unauthorized check_coding_session attempt blocked');
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized check_coding_session attempt blocked',
+        );
         break;
       }
       if (deps.checkCodingSession && data.sessionId) {
@@ -752,7 +837,10 @@ export async function processTaskIpc(
 
     case 'send_to_coding_session': {
       if (!isMain) {
-        logger.warn({ sourceGroup }, 'Unauthorized send_to_coding_session attempt blocked');
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized send_to_coding_session attempt blocked',
+        );
         break;
       }
       if (deps.sendToCodingSession && data.sessionId && data.input) {
@@ -764,7 +852,10 @@ export async function processTaskIpc(
 
     case 'stop_coding_session': {
       if (!isMain) {
-        logger.warn({ sourceGroup }, 'Unauthorized stop_coding_session attempt blocked');
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized stop_coding_session attempt blocked',
+        );
         break;
       }
       if (deps.stopCodingSession && data.sessionId) {
@@ -789,5 +880,8 @@ function writeIpcResponse(
   const responseDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'responses');
   fs.mkdirSync(responseDir, { recursive: true });
   const responsePath = path.join(responseDir, `${requestId}.json`);
-  fs.writeFileSync(responsePath, JSON.stringify({ ...result, timestamp: new Date().toISOString() }));
+  fs.writeFileSync(
+    responsePath,
+    JSON.stringify({ ...result, timestamp: new Date().toISOString() }),
+  );
 }

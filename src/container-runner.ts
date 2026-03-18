@@ -200,7 +200,10 @@ function buildVolumeMounts(
     'agent-runner-src',
   );
   if (fs.existsSync(agentRunnerSrc)) {
-    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true, force: true });
+    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, {
+      recursive: true,
+      force: true,
+    });
   }
   mounts.push({
     hostPath: groupAgentRunnerDir,
@@ -223,7 +226,11 @@ function buildVolumeMounts(
     const calendarDir = path.join(DATA_DIR, 'calendar');
     fs.mkdirSync(calendarDir, { recursive: true });
     try {
-      const scriptPath = path.join(process.cwd(), 'scripts', 'get-calendar-events.sh');
+      const scriptPath = path.join(
+        process.cwd(),
+        'scripts',
+        'get-calendar-events.sh',
+      );
       if (fs.existsSync(scriptPath)) {
         execSync(`${scriptPath} 7`, { stdio: 'pipe', timeout: 10000 });
       }
