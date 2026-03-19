@@ -1,10 +1,13 @@
+import fs from 'fs';
 import https from 'https';
+import path from 'path';
 import { Api, Bot } from 'grammy';
 
 import {
   ASSISTANT_NAME,
   TRIGGER_PATTERN,
   TELEGRAM_BOT_POOL,
+  GROUPS_DIR,
 } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
@@ -51,10 +54,29 @@ export class TelegramChannel implements Channel {
   private bot: Bot | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  // Track last message ID per chat for reaction updates
+  private lastMessageIds = new Map<string, number>();
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
     this.opts = opts;
+  }
+
+  /** React to a message with an emoji. Pass empty string to remove reaction. */
+  async react(chatJid: string, emoji: string): Promise<void> {
+    if (!this.bot) return;
+    const msgId = this.lastMessageIds.get(chatJid);
+    if (!msgId) return;
+    try {
+      const numericId = chatJid.replace(/^tg:/, '');
+      await this.bot.api.raw.setMessageReaction({
+        chat_id: Number(numericId),
+        message_id: msgId,
+        reaction: emoji ? [{ type: 'emoji', emoji } as any] : [],
+      });
+    } catch (err) {
+      logger.debug({ chatJid, emoji, err }, 'Failed to set reaction');
+    }
   }
 
   async connect(): Promise<void> {
@@ -146,6 +168,12 @@ export class TelegramChannel implements Channel {
         return;
       }
 
+      // Track message for reactions and react with 👀 if it's a trigger
+      this.lastMessageIds.set(chatJid, ctx.message.message_id);
+      if (TRIGGER_PATTERN.test(content) || !group.requiresTrigger) {
+        this.react(chatJid, '👀').catch(() => {});
+      }
+
       // Deliver message — startMessageLoop() will pick it up
       this.opts.onMessage(chatJid, {
         id: msgId,
@@ -197,7 +225,64 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    this.bot.on('message:photo', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      try {
+        // Get highest resolution photo
+        const photos = ctx.message.photo;
+        const largest = photos[photos.length - 1];
+        const file = await ctx.api.getFile(largest.file_id);
+        const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+
+        // Save to group folder
+        const imagesDir = path.join(GROUPS_DIR, group.folder, 'images');
+        fs.mkdirSync(imagesDir, { recursive: true });
+
+        // Clean up images older than 24 hours
+        try {
+          const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+          for (const f of fs.readdirSync(imagesDir)) {
+            const fp = path.join(imagesDir, f);
+            if (fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
+          }
+        } catch { /* ignore cleanup errors */ }
+        const ext = path.extname(file.file_path || '.jpg') || '.jpg';
+        const filename = `photo-${Date.now()}${ext}`;
+        const savePath = path.join(imagesDir, filename);
+
+        // Download the file
+        const response = await fetch(fileUrl);
+        const buffer = Buffer.from(await response.arrayBuffer());
+        fs.writeFileSync(savePath, buffer);
+
+        const caption = ctx.message.caption || '';
+        const triggerPrefix = TRIGGER_PATTERN.test(caption) ? '' : `@${ASSISTANT_NAME} `;
+        const content = `${triggerPrefix}[Photo saved to ${savePath}] ${caption}`.trim();
+
+        const timestamp = new Date(ctx.message.date * 1000).toISOString();
+        const senderName = ctx.from?.first_name || ctx.from?.username || 'Unknown';
+
+        const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+        this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
+        this.opts.onMessage(chatJid, {
+          id: ctx.message.message_id.toString(),
+          chat_jid: chatJid,
+          sender: ctx.from?.id?.toString() || '',
+          sender_name: senderName,
+          content,
+          timestamp,
+          is_from_me: false,
+        });
+
+        logger.info({ chatJid, savePath, size: buffer.length }, 'Telegram photo saved');
+      } catch (err) {
+        logger.error({ err }, 'Failed to download Telegram photo');
+        storeNonText(ctx, '[Photo - failed to download]');
+      }
+    });
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
     this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
@@ -258,6 +343,8 @@ export class TelegramChannel implements Channel {
         }
       }
       logger.info({ jid, length: text.length }, 'Telegram message sent');
+      // Clear the 👀 reaction now that we've responded
+      this.react(jid, '').catch(() => {});
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
     }
